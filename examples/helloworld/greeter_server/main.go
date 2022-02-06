@@ -32,6 +32,7 @@ import (
 
 var (
 	port = flag.Int("port", 50051, "The server port")
+	port2 = flag.Int("port", 50052, "The server port")
 )
 
 // server is used to implement helloworld.GreeterServer.
@@ -57,4 +58,5 @@ func main() {
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
+
 }

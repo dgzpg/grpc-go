@@ -736,6 +736,9 @@ func (l *listenSocket) Close() error {
 // Serve returns when lis.Accept fails with fatal errors.  lis will be closed when
 // this method returns.
 // Serve will return a non-nil error unless Stop or GracefulStop is called.
+//Serve 在侦听器 lis 上接受传入连接，为每个连接创建一个新的 ServerTransport 和 service goroutine。服务 goroutine 读取 gRPC 请求，
+//然后调用注册的处理程序来回复它们。当 lis.Accept 因致命错误而失败时，Serve 返回。
+//lis 将在此方法返回时关闭。除非调用 Stop 或 GracefulStop，否则 Serve 将返回非零错误。
 func (s *Server) Serve(lis net.Listener) error {
 	s.mu.Lock()
 	s.printf("serving")
@@ -776,7 +779,9 @@ func (s *Server) Serve(lis net.Listener) error {
 	var tempDelay time.Duration // how long to sleep on accept failure
 
 	for {
+		//todo
 		rawConn, err := lis.Accept()
+		fmt.Printf("processing...")
 		if err != nil {
 			if ne, ok := err.(interface {
 				Temporary() bool
@@ -816,6 +821,10 @@ func (s *Server) Serve(lis net.Listener) error {
 		//
 		// Make sure we account for the goroutine so GracefulStop doesn't nil out
 		// s.conns before this conn can be added.
+		/**
+		启动一个新的 goroutine 来处理 rawConn，这样我们就不会停止这个 Accept 循环 goroutine。
+		确保我们考虑了 goroutine，因此 GracefulStop 在添加此 conn 之前不会将 s.conns 设为 nil。
+		*/
 		s.serveWG.Add(1)
 		go func() {
 			s.handleRawConn(lis.Addr().String(), rawConn)
@@ -826,6 +835,7 @@ func (s *Server) Serve(lis net.Listener) error {
 
 // handleRawConn forks a goroutine to handle a just-accepted connection that
 // has not had any I/O performed on it yet.
+//handleRawConn 派生一个 goroutine 来处理一个刚刚接受的连接，该连接尚未对其执行任何 IO。
 func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 	if s.quit.HasFired() {
 		rawConn.Close()
@@ -834,6 +844,8 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 	rawConn.SetDeadline(time.Now().Add(s.opts.connectionTimeout))
 
 	// Finish handshaking (HTTP2)
+	// 完成握手 (HTTP2)
+	// todo
 	st := s.newHTTP2Transport(rawConn)
 	rawConn.SetDeadline(time.Time{})
 	if st == nil {
@@ -902,6 +914,7 @@ func (s *Server) serveStreams(st transport.ServerTransport) {
 	var wg sync.WaitGroup
 
 	var roundRobinCounter uint32
+	// 处理事件
 	st.HandleStreams(func(stream *transport.Stream) {
 		wg.Add(1)
 		if s.opts.numServerWorkers > 0 {
@@ -1209,12 +1222,16 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 	// decompression.  If comp and decomp are both set, they are the same;
 	// however they are kept separate to ensure that at most one of the
 	// compressor/decompressor variable pairs are set for use later.
+	// comp 和 cp 用于压缩。 decomp 和 dc 用于解压缩。
+	// 如果同时设置了 comp 和 decomp，则它们是相同的；
+	// 但是，它们是分开的，以确保最多设置一个 compressordecompressor 变量对以供以后使用。
 	var comp, decomp encoding.Compressor
 	var cp Compressor
 	var dc Decompressor
 
 	// If dc is set and matches the stream's compression, use it.  Otherwise, try
 	// to find a matching registered compressor for decomp.
+	// 如果 dc 已设置并与流的压缩匹配，请使用它。否则，尝试找到匹配的注册压缩器进行解压缩。
 	if rc := stream.RecvCompress(); s.opts.dc != nil && s.opts.dc.Type() == rc {
 		dc = s.opts.dc
 	} else if rc != "" && rc != encoding.Identity {
@@ -1230,6 +1247,8 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 	// the incoming message compression method.
 	//
 	// NOTE: this needs to be ahead of all handling, https://github.com/grpc/grpc-go/issues/686.
+	// 如果设置了 cp，请使用它。否则，尝试使用传入消息压缩方法压缩响应。注意：这需要先于所有处理，https：github.comgrpcgrpc-goissues686。
+	// compress 压缩  decompress 解压缩
 	if s.opts.cp != nil {
 		cp = s.opts.cp
 		stream.SetSendCompress(cp.Type())
@@ -1245,6 +1264,7 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 	if sh != nil || binlog != nil {
 		payInfo = &payloadInfo{}
 	}
+	// todo 接受并且解压
 	d, err := recvAndDecompress(&parser{r: stream}, stream, dc, s.opts.maxReceiveMessageSize, payInfo, decomp)
 	if err != nil {
 		if e := t.WriteStatus(stream, status.Convert(err)); e != nil {
@@ -1344,6 +1364,7 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 		}
 		return err
 	}
+
 	if binlog != nil {
 		h, _ := stream.Header()
 		binlog.Log(&binarylog.ServerHeader{

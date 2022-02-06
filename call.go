@@ -26,9 +26,11 @@ import (
 // received.  This is typically called by generated code.
 //
 // All errors returned by Invoke are compatible with the status package.
+// Invoke 通过网络发送 RPC 请求并在收到响应后返回。这通常由生成的代码调用。 Invoke 返回的所有错误都与状态包兼容。
 func (cc *ClientConn) Invoke(ctx context.Context, method string, args, reply interface{}, opts ...CallOption) error {
 	// allow interceptor to see all applicable call options, which means those
 	// configured as defaults from dial option as well as per-call options
+	// 允许拦截器查看所有适用的呼叫选项，这意味着从拨号选项以及每次呼叫选项中配置为默认值的选项
 	opts = combine(cc.dopts.callOptions, opts)
 
 	if cc.dopts.unaryInt != nil {

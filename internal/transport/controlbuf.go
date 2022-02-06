@@ -93,6 +93,11 @@ func (il *itemList) isEmpty() bool {
 // frames we will buffer before preventing new reads from occurring on the
 // transport.  These are control frames sent in response to client requests,
 // such as RST_STREAM due to bad headers or settings acks.
+// 下面定义了可以流过传输控制缓冲区的各种控制项。
+// 它们代表控制任务的不同方面，例如，流控制、设置、流重置等。
+
+// maxQueuedTransportResponseFrames 是我们将在阻止传输上发生新读取之前缓冲的排队最多的“传输响应”帧。
+// 这些是响应客户端请求而发送的控制帧，例如由于错误的标头或设置确认而导致的 RST_STREAM。
 const maxQueuedTransportResponseFrames = 50
 
 type cbItem interface {
@@ -153,6 +158,7 @@ type dataFrame struct {
 
 func (*dataFrame) isTransportResponseFrame() bool { return false }
 
+// 滑动窗口帧
 type incomingWindowUpdate struct {
 	streamID  uint32
 	increment uint32
@@ -245,6 +251,9 @@ type outStreamList struct {
 	// This is needed so that an outStream object can
 	// deleteSelf() in O(1) time without knowing which
 	// list it belongs to.
+	// 以下是标记列表开始和结束的标记对象。
+	// 它们不包含任何项目列表。所有有效对象都插入它们之间。
+	// 这是必需的，以便 outStream 对象可以在 O(1) 时间内 deleteSelf() 而不知道它属于哪个列表。
 	head *outStream
 	tail *outStream
 }
@@ -283,6 +292,9 @@ func (l *outStreamList) dequeue() *outStream {
 // but can also be used to instruct loopy to update its internal state.
 // It shouldn't be confused with an HTTP2 frame, although some of the control frames
 // like dataFrame and headerFrame do go out on wire as HTTP2 frames.
+// controlBuffer 是一种将信息传递给 loopy 的方法。信息作为称为控制帧的特定结构类型传递。
+// 控制帧不仅代表要发送的数据、消息或标头，还可以用于指示 loopy 更新其内部状态。
+// 它不应该与 HTTP2 帧相混淆，尽管一些控制帧（如 dataFrame 和 headerFrame）确实作为 HTTP2 帧通过网络传输。
 type controlBuffer struct {
 	ch              chan struct{}
 	done            <-chan struct{}
@@ -296,6 +308,9 @@ type controlBuffer struct {
 	// when transportResponseFrames >= maxQueuedTransportResponseFrames and is
 	// closed and nilled when transportResponseFrames drops below the
 	// threshold.  Both fields are protected by mu.
+	// transportResponseFrames 计算排队项目的数量，这些项目代表对等方发起的操作的响应。
+	// trfChan 在 transportResponseFrames >= maxQueuedTransportResponseFrames 时创建，
+	// 并在 transportResponseFrames 低于阈值时关闭并取消。这两个字段都受 mu 保护。
 	transportResponseFrames int
 	trfChan                 atomic.Value // chan struct{}
 }
@@ -384,6 +399,7 @@ func (c *controlBuffer) get(block bool) (interface{}, error) {
 			return nil, c.err
 		}
 		if !c.list.isEmpty() {
+
 			h := c.list.dequeue().(cbItem)
 			if h.isTransportResponseFrame() {
 				if c.transportResponseFrames == maxQueuedTransportResponseFrames {
@@ -422,6 +438,7 @@ func (c *controlBuffer) finish() {
 	// There may be headers for streams in the control buffer.
 	// These streams need to be cleaned out since the transport
 	// is still not aware of these yet.
+	// 控制缓冲区中可能有流的标头。这些流需要被清除，因为传输仍然不知道这些。
 	for head := c.list.dequeueAll(); head != nil; head = head.next {
 		hdr, ok := head.it.(*headerFrame)
 		if !ok {
@@ -458,6 +475,12 @@ const (
 // thereby closely resemebling to a round-robin scheduling over all streams. While
 // processing a stream, loopy writes out data bytes from this stream capped by the min
 // of http2MaxFrameLen, connection-level flow control and stream-level flow control.
+// Loopy 从控制缓冲区接收帧。
+// 每一帧都是单独处理的； Loopy 所做的大部分工作都用于处理数据帧。
+// Loopy 维护一个活动流队列，每个流维护一个数据帧队列；
+// 当 loopy 接收到数据帧时，它会被添加到相关流的队列中。
+// Loopy 通过每次迭代处理一个节点来遍历这个活动流列表，从而非常类似于对所有流进行循环调度。
+// 在处理流时，loopy 从该流中写出数据字节，其上限为 http2MaxFrameLen、连接级流控制和流级流控制的最小值。
 type loopyWriter struct {
 	side      side
 	cbuf      *controlBuffer
@@ -466,11 +489,13 @@ type loopyWriter struct {
 	// estdStreams is map of all established streams that are not cleaned-up yet.
 	// On client-side, this is all streams whose headers were sent out.
 	// On server-side, this is all streams whose headers were received.
+	// estdStreams 是尚未清理的所有已建立流的映射。在客户端，这是所有已发送标头的流。在服务器端，这是所有接收到标头的流。
 	estdStreams map[uint32]*outStream // Established streams.
 	// activeStreams is a linked-list of all streams that have data to send and some
 	// stream-level flow control quota.
 	// Each of these streams internally have a list of data items(and perhaps trailers
 	// on the server-side) to be sent out.
+	// activeStreams 是所有要发送数据和一些流级流量控制配额的流的链表。这些流中的每一个在内部都有一个要发送的数据项列表（可能还有服务器端的预告片）。
 	activeStreams *outStreamList
 	framer        *framer
 	hBuf          *bytes.Buffer  // The buffer for HPACK encoding.
@@ -517,6 +542,19 @@ const minBatchSize = 1000
 // When there's no more control frames to read from controlBuf, loopy flushes the write buffer.
 // As an optimization, to increase the batch size for each flush, loopy yields the processor, once
 // if the batch size is too low to give stream goroutines a chance to fill it up.
+// run 应该在一个单独的 goroutine 中运行。它从 controlBuf 读取控制帧并通过以下方式处理它们：
+// 1. 更新 loopy 的内部状态，或者
+// 2. 在线写入 HTTP2 帧。
+//
+// Loopy 将所有活动流与要发送的数据保存在链表中。
+// activeStreams 链表中的所有流必须同时具有：
+// 1. 要发送的数据，以及
+// 2. 可用的流级流量控制配额。
+//
+// 在 run loop 的每次迭代中，除了处理传入的控制帧之外，loopy 调用 processData，它处理来自 activeStreams 链表的一个节点。
+// 这导致将 HTTP2 帧写入底层写入缓冲区。
+// 当没有更多控制帧可以从 controlBuf 读取时，loopy 会刷新写缓冲区。
+// 作为一种优化，为了增加每次刷新的批处理大小，loopy 会产生处理器，如果批处理大小太小而无法给流 goroutine 填充它的机会。
 func (l *loopyWriter) run() (err error) {
 	defer func() {
 		if err == ErrConnClosing {
@@ -524,6 +562,10 @@ func (l *loopyWriter) run() (err error) {
 			// 1. When the connection is closed by some other known issue.
 			// 2. User closed the connection.
 			// 3. A graceful close of connection.
+			// 不要将 ErrConnClosing 记录为错误，因为它发生了
+			// 1. 当连接被其他一些已知问题关闭时。
+			// 2. 用户关闭连接。
+			// 3. 优雅地关闭连接。
 			if logger.V(logLevel) {
 				logger.Infof("transport: loopyWriter.run returning. %v", err)
 			}
@@ -754,6 +796,7 @@ func (l *loopyWriter) cleanupStreamHandler(c *cleanupStream) error {
 		// On the server side it could be a trailers-only response or
 		// a RST_STREAM before stream initialization thus the stream might
 		// not be established yet.
+		// 在服务器端，它可能是仅预告片响应或流初始化之前的 RST_STREAM，因此流可能尚未建立。
 		delete(l.estdStreams, c.streamID)
 		str.deleteSelf()
 	}
@@ -822,7 +865,7 @@ func (l *loopyWriter) handle(i interface{}) error {
 	case *outgoingSettings:
 		return l.outgoingSettingsHandler(i)
 	case *headerFrame:
-		return l.headerHandler(i)
+		return l.headerHandler(i) 
 	case *registerStream:
 		return l.registerStreamHandler(i)
 	case *cleanupStream:
@@ -869,6 +912,7 @@ func (l *loopyWriter) applySettings(ss []http2.Setting) error {
 // processData removes the first stream from active streams, writes out at most 16KB
 // of its data and then puts it at the end of activeStreams if there's still more data
 // to be sent and stream has some stream-level flow control.
+// processData 从活动流中删除第一个流，最多写出 16KB 的数据，然后如果还有更多数据要发送并且流具有一些流级别的流控制，则将其放在 activeStreams 的末尾
 func (l *loopyWriter) processData() (bool, error) {
 	if l.sendQuota == 0 {
 		return true, nil

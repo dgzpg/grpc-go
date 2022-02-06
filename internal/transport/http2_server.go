@@ -136,11 +136,15 @@ type http2Server struct {
 // returns a nil transport and a non-nil error. For a special case where the
 // underlying conn gets closed before the client preface could be read, it
 // returns a nil transport and a nil error.
+// NewServerTransport 使用来自 config 的 conn 和配置选项创建一个 http2 传输。
+// 它返回一个非零传输和一个成功的零错误。失败时，它返回一个 nil 传输和一个非 nil 错误。
+// 对于底层 conn 在读取客户端前言之前关闭的特殊情况，它返回 nil 传输和 nil 错误。
 func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport, err error) {
 	var authInfo credentials.AuthInfo
 	rawConn := conn
 	if config.Credentials != nil {
 		var err error
+		// todo 握手？？？
 		conn, authInfo, err = config.Credentials.ServerHandshake(rawConn)
 		if err != nil {
 			// ErrConnDispatched means that the connection was dispatched away
@@ -297,6 +301,8 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 		// closed immediately by the latter.  Returning io.EOF here allows the
 		// grpc server implementation to recognize this scenario and suppress
 		// logging to reduce spam.
+		// 在 gRPC 服务器运行在执行常规 TCP 级别健康检查的云负载均衡器后面的部署中，连接会立即被后者关闭。
+		// 在此处返回 io.EOF 允许 grpc 服务器实现识别这种情况并抑制日志记录以减少垃圾邮件。
 		if err == io.EOF {
 			return nil, io.EOF
 		}

@@ -132,6 +132,12 @@ func (dcs *defaultConfigSelector) SelectConfig(rpcInfo iresolver.RPCInfo) (*ires
 // The target name syntax is defined in
 // https://github.com/grpc/grpc/blob/master/doc/naming.md.
 // e.g. to use dns resolver, a "dns:///" prefix should be applied to the target.
+// DialContext 创建到给定目标的客户端连接。默认情况下，它是一个非阻塞拨号（该功能不会等待建立连接，并且连接发生在后台）。
+// 要使其成为阻塞拨号，请使用 WithBlock() 拨号选项。
+// 在非阻塞情况下，ctx 不会对连接采取行动。 它仅控制设置步骤。
+// 在阻塞情况下，ctx 可用于取消或过期挂起的连接。一旦此函数返回，ctx 的取消和过期将是noop。
+// 此函数返回后，用户应调用 ClientConn.Close 以终止所有挂起的操作。
+// 目标名称语法在 https:github.comgrpcgrpcblobmasterdocnaming.md 中定义。例如要使用 dns 解析器，应将“dns:”前缀应用于目标。
 func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *ClientConn, err error) {
 	cc := &ClientConn{
 		target:            target,
@@ -1639,6 +1645,7 @@ func (cc *ClientConn) parseTargetAndFindResolver() (resolver.Builder, error) {
 	// specified an unregistered scheme. We should fallback to the default
 	// scheme, except when a custom dialer is specified in which case, we should
 	// always use passthrough scheme.
+	// 我们在这里是因为用户的拨号目标不包含方案或指定未注册的方案。我们应该回退到默认方案，除非在这种情况下指定了自定义拨号程序，否则我们应该始终使用直通方案。
 	defScheme := resolver.GetDefaultScheme()
 	channelz.Infof(logger, cc.channelzID, "fallback to scheme %q", defScheme)
 	canonicalTarget := defScheme + ":///" + cc.target

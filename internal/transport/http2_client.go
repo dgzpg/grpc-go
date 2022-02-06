@@ -969,6 +969,7 @@ func (t *http2Client) Write(s *Stream, hdr []byte, data []byte, opts *Options) e
 			return err
 		}
 	}
+
 	return t.controlBuf.put(df)
 }
 
